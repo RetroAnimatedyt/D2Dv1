@@ -2,7 +2,8 @@ name: Deploy Vite Site to GitHub Pages
 
 on:
   push:
-    branches: ['main'] # Change to 'master' if that is your main branch
+    branches: ['master']
+  workflow_dispatch: # Change to 'master' if that is your main branch
 
 permissions:
   contents: read
