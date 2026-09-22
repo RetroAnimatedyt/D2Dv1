@@ -4,6 +4,9 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: './', // Ensures assets load correctly on GitHub Pages
-  plugins: [react(), tailwindcss()],
+  base: '/D2Dv1/', // <-- THIS LINE PREVENTS THE WHITE SCREEN
+  plugins: [
+    react(),
+    tailwindcss(),
+  ],
 })
