@@ -1,3 +1,4 @@
+import React, { useState, useEffect } from 'react';
 import { 
   Check, 
   Trash2, 
@@ -5,6 +6,7 @@ import {
   Flame, 
   Target, 
   Trophy, 
+  BarChart2,
   Star, 
   Dumbbell, 
   Plus, 
