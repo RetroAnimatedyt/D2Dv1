@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: './', // <-- THIS LINE PREVENTS THE WHITE SCREEN
+  base: '/D2Dv1/', // <-- THIS LINE PREVENTS THE WHITE SCREEN
   plugins: [
     react(),
     tailwindcss(),
