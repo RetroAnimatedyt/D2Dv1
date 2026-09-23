@@ -1,12 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { 
+  initGoogleAuth, 
+  requestGoogleLogin, 
+  findDataFile, 
+  loadFromDrive, 
+  saveToDrive 
+} from './googleDrive';
+
+import { 
   Check, 
   Trash2, 
   Settings, 
   Flame, 
   Target, 
   Trophy, 
-  BarChart2,
   Star, 
   Dumbbell, 
   Plus, 
@@ -16,7 +23,8 @@ import {
   ExternalLink, 
   X,
   Calendar as CalendarIcon,
-  CheckCircle2
+  CheckCircle2,
+  LogOut
 } from 'lucide-react';
 
 // --- Types ---
@@ -52,28 +60,7 @@ export interface DayLog {
   scorePossible: number;
 }
 
-// --- Cookie Helper Utilities ---
-const setCookie = (name: string, value: any, days = 365) => {
-  const expires = new Date(Date.now() + days * 864e5).toUTCString();
-  document.cookie = `${name}=${encodeURIComponent(JSON.stringify(value))}; expires=${expires}; path=/`;
-};
-
-const getCookie = (name: string) => {
-  const cookieArr = document.cookie.split('; ');
-  for (const cookie of cookieArr) {
-    const [key, val] = cookie.split('=');
-    if (key === name && val) {
-      try {
-        return JSON.parse(decodeURIComponent(val));
-      } catch (e) {
-        return null;
-      }
-    }
-  }
-  return null;
-};
-
-// --- Initial Mock Data ---
+// --- Initial Data Fallbacks ---
 const initialTasks: Task[] = [
   { id: '1', title: 'Morning Hydration & Stretches', score: 10, completed: false, color: 'blue' },
   { id: '2', title: 'Deep Work Session (2 Hours)', score: 30, completed: false, color: 'purple' },
@@ -87,9 +74,8 @@ const initialWorkouts: WorkoutRoutine[] = [
     dayOfWeek: 1, // Monday
     title: 'Chest & Triceps (Push Day)',
     exercises: [
-      { id: 'e1', name: 'Barbell Bench Press', setsReps: '4 sets x 8-10 reps', notes: 'Keep elbows tucked at 45 degrees. Focus on slow eccentric motion.', videoUrl: 'https://www.youtube.com/results?search_query=bench+press+form', completed: false },
-      { id: 'e2', name: 'Incline Dumbbell Press', setsReps: '3 sets x 10-12 reps', notes: 'Pause slightly at the bottom stretch.', videoUrl: 'https://www.youtube.com/results?search_query=incline+dumbbell+press', completed: false },
-      { id: 'e3', name: 'Tricep Rope Pushdowns', setsReps: '3 sets x 12-15 reps', notes: 'Lock shoulders in place, flare rope at bottom.', videoUrl: 'https://www.youtube.com/results?search_query=tricep+rope+pushdown', completed: false }
+      { id: 'e1', name: 'Barbell Bench Press', setsReps: '4 sets x 8-10 reps', notes: 'Keep elbows tucked at 45 degrees.', videoUrl: 'https://www.youtube.com/results?search_query=bench+press+form', completed: false },
+      { id: 'e2', name: 'Incline Dumbbell Press', setsReps: '3 sets x 10-12 reps', notes: 'Pause slightly at the bottom stretch.', videoUrl: '', completed: false }
     ]
   },
   {
@@ -97,96 +83,109 @@ const initialWorkouts: WorkoutRoutine[] = [
     dayOfWeek: 2, // Tuesday
     title: 'Back & Biceps (Pull Day)',
     exercises: [
-      { id: 'e4', name: 'Pull-ups / Lat Pulldowns', setsReps: '4 sets x 8-10 reps', notes: 'Pull with elbows down to engage lats.', videoUrl: 'https://www.youtube.com/results?search_query=lat+pulldown+form', completed: false },
-      { id: 'e5', name: 'Seated Cable Rows', setsReps: '3 sets x 10-12 reps', notes: 'Squeeze shoulder blades together at full contraction.', videoUrl: 'https://www.youtube.com/results?search_query=seated+cable+row', completed: false }
-    ]
-  },
-  {
-    id: 'w3',
-    dayOfWeek: 3, // Wednesday
-    title: 'Legs & Core',
-    exercises: [
-      { id: 'e6', name: 'Barbell Squats', setsReps: '4 sets x 6-8 reps', notes: 'Keep chest upright, hit parallel or lower.', videoUrl: 'https://www.youtube.com/results?search_query=barbell+squat+form', completed: false }
+      { id: 'e3', name: 'Pull-ups / Lat Pulldowns', setsReps: '4 sets x 8-10 reps', notes: 'Pull with elbows down to engage lats.', videoUrl: '', completed: false }
     ]
   }
 ];
 
 export default function App() {
   const todayDateStr = new Date().toISOString().split('T')[0];
-  
-  // State
+
+  // Auth & Drive State
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [fileId, setFileId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  // App State
   const [activeTab, setActiveTab] = useState<'tasks' | 'workouts'>('tasks');
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [workouts, setWorkouts] = useState<WorkoutRoutine[]>([]);
+  const [tasks, setTasks] = useState<Task[]>(initialTasks);
+  const [workouts, setWorkouts] = useState<WorkoutRoutine[]>(initialWorkouts);
   const [dayLogs, setDayLogs] = useState<Record<string, DayLog>>({});
-  
-  // Modal & Edit states
+
+  // UI States
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskScore, setNewTaskScore] = useState<number>(10);
-  
-  // Workout State
   const [selectedDayOfWeek, setSelectedDayOfWeek] = useState<number>(new Date().getDay());
   const [editingExercise, setEditingExercise] = useState<{ routineId: string; exercise: Exercise } | null>(null);
   const [newRoutineTitle, setNewRoutineTitle] = useState('');
-  
-  // Calendar State
   const [calendarDate, setCalendarDate] = useState<Date>(new Date());
   const [showEndDaySummary, setShowEndDaySummary] = useState(false);
   const [summaryData, setSummaryData] = useState<{ achieved: number; total: number } | null>(null);
 
-  // Load Initial Cookies
+  // Initialize Google OAuth Token Client on Load
   useEffect(() => {
-    const savedLastDate = getCookie('last_visited_date');
-    const savedTasks = getCookie('user_tasks') || initialTasks;
-    const savedWorkouts = getCookie('user_workouts') || initialWorkouts;
-    const savedLogs = getCookie('day_logs') || {};
+    initGoogleAuth(async (token) => {
+      setAccessToken(token);
+      setIsLoading(true);
 
-    // Auto Daily Reset check
-    if (savedLastDate && savedLastDate !== todayDateStr) {
-      // Reset task checkmarks for the new day
-      const resetTasks = savedTasks.map((t: Task) => ({ ...t, completed: false }));
-      const resetWorkouts = savedWorkouts.map((w: WorkoutRoutine) => ({
-        ...w,
-        exercises: w.exercises.map((e: Exercise) => ({ ...e, completed: false }))
-      }));
-      setTasks(resetTasks);
-      setWorkouts(resetWorkouts);
-      setCookie('user_tasks', resetTasks);
-      setCookie('user_workouts', resetWorkouts);
-    } else {
-      setTasks(savedTasks);
-      setWorkouts(savedWorkouts);
-    }
-
-    setDayLogs(savedLogs);
-    setCookie('last_visited_date', todayDateStr);
+      try {
+        const existingFileId = await findDataFile(token);
+        if (existingFileId) {
+          setFileId(existingFileId);
+          const data = await loadFromDrive(token, existingFileId);
+          if (data) {
+            if (data.lastDate !== todayDateStr) {
+              const resetTasks = (data.tasks || []).map((t: Task) => ({ ...t, completed: false }));
+              const resetWorkouts = (data.workouts || []).map((w: WorkoutRoutine) => ({
+                ...w,
+                exercises: w.exercises.map((e: Exercise) => ({ ...e, completed: false }))
+              }));
+              setTasks(resetTasks);
+              setWorkouts(resetWorkouts);
+              setDayLogs(data.dayLogs || {});
+              syncToDrive(token, existingFileId, resetTasks, resetWorkouts, data.dayLogs || {});
+            } else {
+              setTasks(data.tasks || []);
+              setWorkouts(data.workouts || []);
+              setDayLogs(data.dayLogs || {});
+            }
+          }
+        } else {
+          const newId = await saveToDrive(token, null, {
+            tasks: initialTasks,
+            workouts: initialWorkouts,
+            dayLogs: {},
+            lastDate: todayDateStr
+          });
+          setFileId(newId);
+        }
+      } catch (err) {
+        console.error("Error loading data from Google Drive", err);
+      } finally {
+        setIsLoading(false);
+      }
+    });
   }, [todayDateStr]);
 
-  // Sync states to cookies
-  const saveTasksToCookie = (updatedTasks: Task[]) => {
-    setTasks(updatedTasks);
-    setCookie('user_tasks', updatedTasks);
+  // Sync state changes to Google Drive
+  const syncToDrive = async (
+    token = accessToken, 
+    fId = fileId, 
+    updatedTasks = tasks, 
+    updatedWorkouts = workouts, 
+    updatedLogs = dayLogs
+  ) => {
+    if (!token) return;
+    const payload = {
+      tasks: updatedTasks,
+      workouts: updatedWorkouts,
+      dayLogs: updatedLogs,
+      lastDate: todayDateStr
+    };
+    const savedFileId = await saveToDrive(token, fId, payload);
+    if (!fileId && savedFileId) setFileId(savedFileId);
   };
 
-  const saveWorkoutsToCookie = (updatedWorkouts: WorkoutRoutine[]) => {
-    setWorkouts(updatedWorkouts);
-    setCookie('user_workouts', updatedWorkouts);
-  };
-
-  const saveLogsToCookie = (updatedLogs: Record<string, DayLog>) => {
-    setDayLogs(updatedLogs);
-    setCookie('day_logs', updatedLogs);
-  };
-
-  // --- Calculations ---
+  // Calculations
   const perfectScore = tasks.reduce((acc, curr) => acc + curr.score, 0);
   const currentScore = tasks.filter(t => t.completed).reduce((acc, curr) => acc + curr.score, 0);
 
-  // --- Task Actions ---
+  // --- Task Handlers ---
   const toggleTask = (id: string) => {
     const updated = tasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t);
-    saveTasksToCookie(updated);
+    setTasks(updated);
+    syncToDrive(accessToken, fileId, updated, workouts, dayLogs);
   };
 
   const addTask = () => {
@@ -199,14 +198,16 @@ export default function App() {
       color: 'none'
     };
     const updated = [...tasks, newTask];
-    saveTasksToCookie(updated);
+    setTasks(updated);
     setNewTaskTitle('');
     setNewTaskScore(10);
+    syncToDrive(accessToken, fileId, updated, workouts, dayLogs);
   };
 
   const deleteTask = (id: string) => {
     const updated = tasks.filter(t => t.id !== id);
-    saveTasksToCookie(updated);
+    setTasks(updated);
+    syncToDrive(accessToken, fileId, updated, workouts, dayLogs);
   };
 
   const cycleTaskColor = (id: string) => {
@@ -218,17 +219,18 @@ export default function App() {
       }
       return t;
     });
-    saveTasksToCookie(updated);
+    setTasks(updated);
+    syncToDrive(accessToken, fileId, updated, workouts, dayLogs);
   };
 
   const updateTaskDetails = () => {
     if (!editingTask) return;
     const updated = tasks.map(t => t.id === editingTask.id ? editingTask : t);
-    saveTasksToCookie(updated);
+    setTasks(updated);
     setEditingTask(null);
+    syncToDrive(accessToken, fileId, updated, workouts, dayLogs);
   };
 
-  // --- End Day Logic ---
   const handleEndDay = () => {
     const log: DayLog = {
       date: todayDateStr,
@@ -236,12 +238,13 @@ export default function App() {
       scorePossible: perfectScore
     };
     const updatedLogs = { ...dayLogs, [todayDateStr]: log };
-    saveLogsToCookie(updatedLogs);
+    setDayLogs(updatedLogs);
     setSummaryData({ achieved: currentScore, total: perfectScore });
     setShowEndDaySummary(true);
+    syncToDrive(accessToken, fileId, tasks, workouts, updatedLogs);
   };
 
-  // --- Workout Actions ---
+  // --- Workout Handlers ---
   const toggleExercise = (routineId: string, exerciseId: string) => {
     const updated = workouts.map(w => {
       if (w.id === routineId) {
@@ -252,7 +255,8 @@ export default function App() {
       }
       return w;
     });
-    saveWorkoutsToCookie(updated);
+    setWorkouts(updated);
+    syncToDrive(accessToken, fileId, tasks, updated, dayLogs);
   };
 
   const addRoutine = () => {
@@ -263,12 +267,16 @@ export default function App() {
       title: newRoutineTitle,
       exercises: []
     };
-    saveWorkoutsToCookie([...workouts, newRoutine]);
+    const updated = [...workouts, newRoutine];
+    setWorkouts(updated);
     setNewRoutineTitle('');
+    syncToDrive(accessToken, fileId, tasks, updated, dayLogs);
   };
 
   const deleteRoutine = (routineId: string) => {
-    saveWorkoutsToCookie(workouts.filter(w => w.id !== routineId));
+    const updated = workouts.filter(w => w.id !== routineId);
+    setWorkouts(updated);
+    syncToDrive(accessToken, fileId, tasks, updated, dayLogs);
   };
 
   const addExerciseToRoutine = (routineId: string) => {
@@ -278,7 +286,7 @@ export default function App() {
           id: Date.now().toString(),
           name: 'New Exercise',
           setsReps: '3 sets x 10 reps',
-          notes: 'Add form cues or target weights here...',
+          notes: 'Add form cues here...',
           videoUrl: '',
           completed: false
         };
@@ -286,7 +294,8 @@ export default function App() {
       }
       return w;
     });
-    saveWorkoutsToCookie(updated);
+    setWorkouts(updated);
+    syncToDrive(accessToken, fileId, tasks, updated, dayLogs);
   };
 
   const deleteExercise = (routineId: string, exerciseId: string) => {
@@ -296,7 +305,8 @@ export default function App() {
       }
       return w;
     });
-    saveWorkoutsToCookie(updated);
+    setWorkouts(updated);
+    syncToDrive(accessToken, fileId, tasks, updated, dayLogs);
   };
 
   const saveExerciseEdits = () => {
@@ -311,11 +321,12 @@ export default function App() {
       }
       return w;
     });
-    saveWorkoutsToCookie(updated);
+    setWorkouts(updated);
     setEditingExercise(null);
+    syncToDrive(accessToken, fileId, tasks, updated, dayLogs);
   };
 
-  // --- Color Helpers ---
+  // Color Styles Helper
   const getColorStyle = (color: TaskColor) => {
     switch (color) {
       case 'yellow': return 'bg-yellow-100 border-yellow-400';
@@ -327,7 +338,7 @@ export default function App() {
     }
   };
 
-  // --- Calendar Helpers ---
+  // Calendar Helpers
   const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
   const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
 
@@ -402,15 +413,34 @@ export default function App() {
   const daysOfWeekNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const daysShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+  // Auth Screen if Not Logged In
+  if (!accessToken) {
+    return (
+      <div className="min-h-screen bg-white text-black flex items-center justify-center p-4">
+        <div className="border-2 border-black rounded-[24px] p-8 max-w-md w-full shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] text-center space-y-6 bg-white">
+          <h1 className="text-3xl font-black uppercase tracking-tight">My Day App</h1>
+          <p className="text-xs font-bold text-gray-500 leading-relaxed">
+            Sign in with your Google account to sync your daily tasks and workout routines directly to your Google Drive.
+          </p>
+
+          <button 
+            onClick={requestGoogleLogin}
+            className="w-full bg-black text-white font-bold py-4 rounded-2xl border-2 border-black hover:bg-gray-800 transition-all flex items-center justify-center gap-3 uppercase tracking-wider text-sm shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+          >
+            Sign in with Google
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-white text-black p-4 md:p-8 font-sans max-w-7xl mx-auto flex flex-col">
-      {/* --- Top Navigation & Utility Bar --- */}
+      {/* Header Bar */}
       <header className="border-2 border-black rounded-[24px] p-4 mb-6 flex flex-wrap items-center justify-between gap-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
         <div className="flex items-center gap-2">
-          {/* View Switcher Icons */}
           <button 
             onClick={() => setActiveTab('tasks')} 
-            title="Daily Tasks"
             className={`p-3 rounded-2xl border-2 border-black transition-all flex items-center gap-2 ${
               activeTab === 'tasks' ? 'bg-black text-white' : 'bg-white hover:bg-gray-100'
             }`}
@@ -421,7 +451,6 @@ export default function App() {
 
           <button 
             onClick={() => setActiveTab('workouts')} 
-            title="Workout Routines"
             className={`p-3 rounded-2xl border-2 border-black transition-all flex items-center gap-2 ${
               activeTab === 'workouts' ? 'bg-black text-white' : 'bg-white hover:bg-gray-100'
             }`}
@@ -437,21 +466,26 @@ export default function App() {
           <button className="p-3 border-2 border-black rounded-2xl hover:bg-black hover:text-white transition-colors"><Trophy size={20} /></button>
         </div>
 
-        {/* Perfect Score Counter */}
-        <div className="flex items-center gap-4 bg-gray-50 border-2 border-black rounded-2xl px-4 py-2">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 bg-gray-50 border-2 border-black rounded-2xl px-3 py-2">
             <Star size={18} className="fill-black" />
-            <span className="text-xs font-bold uppercase tracking-wider">Perfect Score:</span>
+            <span className="font-mono text-sm font-bold">{perfectScore} pts</span>
           </div>
-          <span className="font-mono text-xl font-bold">{perfectScore} pts</span>
+
+          <button 
+            onClick={() => { setAccessToken(null); setFileId(null); }}
+            title="Sign Out"
+            className="p-2.5 border-2 border-black rounded-2xl hover:bg-black hover:text-white transition-colors"
+          >
+            <LogOut size={18} />
+          </button>
         </div>
       </header>
 
-      {/* --- Main Section --- */}
+      {/* Main View */}
       {activeTab === 'tasks' ? (
-        /* TASK LIST & CALENDAR VIEW */
         <main className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1">
-          {/* Left Container: Task List */}
+          {/* Task List Section */}
           <section className="border-2 border-black rounded-[24px] p-6 flex flex-col justify-between shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] bg-white">
             <div>
               <div className="flex items-center justify-between mb-6">
@@ -459,9 +493,10 @@ export default function App() {
                   <h1 className="text-2xl font-black uppercase tracking-tight">Daily Tasks</h1>
                   <p className="text-xs font-semibold text-gray-500">Score Progress: {currentScore} / {perfectScore} pts</p>
                 </div>
+                {isLoading && <span className="text-xs font-bold text-gray-400 animate-pulse">Syncing Drive...</span>}
               </div>
 
-              {/* Add New Task Form */}
+              {/* Add Task Bar */}
               <div className="flex gap-2 mb-6">
                 <input 
                   type="text" 
@@ -486,69 +521,58 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Task List */}
+              {/* List */}
               <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
-                {tasks.length === 0 ? (
-                  <p className="text-center text-gray-400 py-8 font-medium">No tasks yet. Add one above!</p>
-                ) : (
-                  tasks.map(task => (
-                    <div 
-                      key={task.id} 
-                      className={`border-2 rounded-2xl p-3 flex items-center justify-between gap-3 transition-all ${getColorStyle(task.color)}`}
-                    >
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        {/* Custom Squircle Checkbox */}
-                        <button 
-                          onClick={() => toggleTask(task.id)}
-                          className={`w-7 h-7 border-2 border-black rounded-lg flex items-center justify-center transition-colors shrink-0 ${
-                            task.completed ? 'bg-black text-white' : 'bg-white'
-                          }`}
-                        >
-                          {task.completed && <Check size={18} strokeWidth={3} />}
-                        </button>
-                        <span className={`font-semibold truncate ${task.completed ? 'line-through text-gray-500' : 'text-black'}`}>
-                          {task.title}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        {/* Score Tag */}
-                        <span className="font-mono text-xs font-bold border-2 border-black rounded-lg px-2 py-0.5 bg-white">
-                          +{task.score}
-                        </span>
-
-                        {/* Color Switcher */}
-                        <button 
-                          onClick={() => cycleTaskColor(task.id)}
-                          title="Cycle Highlight Color"
-                          className="p-1.5 border-2 border-black rounded-lg hover:bg-gray-100 transition-colors text-xs font-bold"
-                        >
-                          🎨
-                        </button>
-
-                        {/* Settings Button */}
-                        <button 
-                          onClick={() => setEditingTask(task)}
-                          className="p-1.5 border-2 border-black rounded-lg hover:bg-gray-100 transition-colors"
-                        >
-                          <Settings size={16} />
-                        </button>
-
-                        {/* Quick Delete */}
-                        <button 
-                          onClick={() => deleteTask(task.id)}
-                          className="p-1.5 border-2 border-black rounded-lg hover:bg-black hover:text-white transition-colors"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
+                {tasks.map(task => (
+                  <div 
+                    key={task.id} 
+                    className={`border-2 rounded-2xl p-3 flex items-center justify-between gap-3 transition-all ${getColorStyle(task.color)}`}
+                  >
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <button 
+                        onClick={() => toggleTask(task.id)}
+                        className={`w-7 h-7 border-2 border-black rounded-lg flex items-center justify-center transition-colors shrink-0 ${
+                          task.completed ? 'bg-black text-white' : 'bg-white'
+                        }`}
+                      >
+                        {task.completed && <Check size={18} strokeWidth={3} />}
+                      </button>
+                      <span className={`font-semibold truncate ${task.completed ? 'line-through text-gray-500' : 'text-black'}`}>
+                        {task.title}
+                      </span>
                     </div>
-                  ))
-                )}
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-mono text-xs font-bold border-2 border-black rounded-lg px-2 py-0.5 bg-white">
+                        +{task.score}
+                      </span>
+
+                      <button 
+                        onClick={() => cycleTaskColor(task.id)}
+                        className="p-1.5 border-2 border-black rounded-lg hover:bg-gray-100 transition-colors text-xs font-bold"
+                      >
+                        🎨
+                      </button>
+
+                      <button 
+                        onClick={() => setEditingTask(task)}
+                        className="p-1.5 border-2 border-black rounded-lg hover:bg-gray-100 transition-colors"
+                      >
+                        <Settings size={16} />
+                      </button>
+
+                      <button 
+                        onClick={() => deleteTask(task.id)}
+                        className="p-1.5 border-2 border-black rounded-lg hover:bg-black hover:text-white transition-colors"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 
-            {/* End Day Button */}
             <div className="pt-6 border-t-2 border-black mt-6">
               <button 
                 onClick={handleEndDay}
@@ -560,13 +584,13 @@ export default function App() {
             </div>
           </section>
 
-          {/* Right Container: Calendar View */}
+          {/* Calendar Section */}
           <section className="border-2 border-black rounded-[24px] p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] bg-white flex flex-col justify-between">
             {renderCalendar()}
           </section>
         </main>
       ) : (
-        /* WORKOUT MANAGER VIEW */
+        /* Workouts View */
         <main className="border-2 border-black rounded-[24px] p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] bg-white flex-1 flex flex-col">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-6 pb-4 border-b-2 border-black">
             <div>
@@ -584,7 +608,6 @@ export default function App() {
             </button>
           </div>
 
-          {/* Day of the Week Navigation Tabs */}
           <div className="grid grid-cols-7 gap-2 mb-6">
             {daysShort.map((dayName, idx) => {
               const isSelected = selectedDayOfWeek === idx;
@@ -605,17 +628,13 @@ export default function App() {
             })}
           </div>
 
-          {/* Routine List for Selected Day */}
           <div className="flex-1 space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold">{daysOfWeekNames[selectedDayOfWeek]}'s Routines</h2>
-            </div>
+            <h2 className="text-xl font-bold">{daysOfWeekNames[selectedDayOfWeek]}'s Routines</h2>
 
-            {/* Add New Routine Header */}
             <div className="flex gap-2 mb-4">
               <input 
                 type="text" 
-                placeholder={`Add new routine for ${daysOfWeekNames[selectedDayOfWeek]} (e.g. Push Day, Core & Cardio)...`}
+                placeholder={`Add new routine for ${daysOfWeekNames[selectedDayOfWeek]}...`}
                 value={newRoutineTitle}
                 onChange={(e) => setNewRoutineTitle(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && addRoutine()}
@@ -629,104 +648,90 @@ export default function App() {
               </button>
             </div>
 
-            {/* Routines Accordion / Sub-menu */}
             <div className="space-y-4">
-              {workouts.filter(w => w.dayOfWeek === selectedDayOfWeek).length === 0 ? (
-                <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-2xl">
-                  <p className="text-gray-400 font-bold">No workout routines scheduled for {daysOfWeekNames[selectedDayOfWeek]}.</p>
-                </div>
-              ) : (
-                workouts.filter(w => w.dayOfWeek === selectedDayOfWeek).map(routine => (
-                  <div key={routine.id} className="border-2 border-black rounded-2xl p-4 bg-gray-50 space-y-4">
-                    <div className="flex items-center justify-between border-b-2 border-black pb-3">
-                      <h3 className="text-lg font-bold">{routine.title}</h3>
-                      <div className="flex items-center gap-2">
-                        <button 
-                          onClick={() => addExerciseToRoutine(routine.id)}
-                          className="px-3 py-1.5 border-2 border-black rounded-xl bg-white text-xs font-bold hover:bg-black hover:text-white transition-colors flex items-center gap-1"
-                        >
-                          <Plus size={14} /> Add Exercise
-                        </button>
-                        <button 
-                          onClick={() => deleteRoutine(routine.id)}
-                          className="p-1.5 border-2 border-black rounded-xl bg-white hover:bg-black hover:text-white transition-colors"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Sub-menu Exercise List */}
-                    <div className="space-y-3">
-                      {routine.exercises.length === 0 ? (
-                        <p className="text-xs text-gray-400 font-medium italic">No exercises added yet. Click "+ Add Exercise" above.</p>
-                      ) : (
-                        routine.exercises.map(exercise => (
-                          <div key={exercise.id} className="border-2 border-black rounded-xl p-3 bg-white space-y-2">
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-3">
-                                <button 
-                                  onClick={() => toggleExercise(routine.id, exercise.id)}
-                                  className={`w-6 h-6 border-2 border-black rounded-md flex items-center justify-center transition-colors ${
-                                    exercise.completed ? 'bg-black text-white' : 'bg-white'
-                                  }`}
-                                >
-                                  {exercise.completed && <Check size={14} strokeWidth={3} />}
-                                </button>
-                                <span className={`font-bold text-sm ${exercise.completed ? 'line-through text-gray-400' : ''}`}>
-                                  {exercise.name}
-                                </span>
-                                <span className="text-xs font-mono bg-gray-100 border border-black rounded px-2 py-0.5 font-bold">
-                                  {exercise.setsReps}
-                                </span>
-                              </div>
-
-                              <div className="flex items-center gap-2">
-                                {exercise.videoUrl && (
-                                  <a 
-                                    href={exercise.videoUrl} 
-                                    target="_blank" 
-                                    rel="noreferrer"
-                                    className="px-2 py-1 border-2 border-black rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-black hover:text-white transition-colors"
-                                  >
-                                    <ExternalLink size={12} /> Tutorial
-                                  </a>
-                                )}
-                                <button 
-                                  onClick={() => setEditingExercise({ routineId: routine.id, exercise })}
-                                  className="p-1.5 border-2 border-black rounded-lg hover:bg-gray-100 transition-colors"
-                                  title="Edit Exercise Notes & Link"
-                                >
-                                  <Pencil size={14} />
-                                </button>
-                                <button 
-                                  onClick={() => deleteExercise(routine.id, exercise.id)}
-                                  className="p-1.5 border-2 border-black rounded-lg hover:bg-black hover:text-white transition-colors"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* Exercise Notes */}
-                            {exercise.notes && (
-                              <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 p-2 rounded-lg font-medium">
-                                💡 <span className="font-bold">Notes:</span> {exercise.notes}
-                              </p>
-                            )}
-                          </div>
-                        ))
-                      )}
+              {workouts.filter(w => w.dayOfWeek === selectedDayOfWeek).map(routine => (
+                <div key={routine.id} className="border-2 border-black rounded-2xl p-4 bg-gray-50 space-y-4">
+                  <div className="flex items-center justify-between border-b-2 border-black pb-3">
+                    <h3 className="text-lg font-bold">{routine.title}</h3>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => addExerciseToRoutine(routine.id)}
+                        className="px-3 py-1.5 border-2 border-black rounded-xl bg-white text-xs font-bold hover:bg-black hover:text-white transition-colors flex items-center gap-1"
+                      >
+                        <Plus size={14} /> Add Exercise
+                      </button>
+                      <button 
+                        onClick={() => deleteRoutine(routine.id)}
+                        className="p-1.5 border-2 border-black rounded-xl bg-white hover:bg-black hover:text-white transition-colors"
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </div>
                   </div>
-                ))
-              )}
+
+                  <div className="space-y-3">
+                    {routine.exercises.map(exercise => (
+                      <div key={exercise.id} className="border-2 border-black rounded-xl p-3 bg-white space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-3">
+                            <button 
+                              onClick={() => toggleExercise(routine.id, exercise.id)}
+                              className={`w-6 h-6 border-2 border-black rounded-md flex items-center justify-center transition-colors ${
+                                exercise.completed ? 'bg-black text-white' : 'bg-white'
+                              }`}
+                            >
+                              {exercise.completed && <Check size={14} strokeWidth={3} />}
+                            </button>
+                            <span className={`font-bold text-sm ${exercise.completed ? 'line-through text-gray-400' : ''}`}>
+                              {exercise.name}
+                            </span>
+                            <span className="text-xs font-mono bg-gray-100 border border-black rounded px-2 py-0.5 font-bold">
+                              {exercise.setsReps}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {exercise.videoUrl && (
+                              <a 
+                                href={exercise.videoUrl} 
+                                target="_blank" 
+                                rel="noreferrer"
+                                className="px-2 py-1 border-2 border-black rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-black hover:text-white transition-colors"
+                              >
+                                <ExternalLink size={12} /> Tutorial
+                              </a>
+                            )}
+                            <button 
+                              onClick={() => setEditingExercise({ routineId: routine.id, exercise })}
+                              className="p-1.5 border-2 border-black rounded-lg hover:bg-gray-100 transition-colors"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button 
+                              onClick={() => deleteExercise(routine.id, exercise.id)}
+                              className="p-1.5 border-2 border-black rounded-lg hover:bg-black hover:text-white transition-colors"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {exercise.notes && (
+                          <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 p-2 rounded-lg font-medium">
+                            💡 <span className="font-bold">Notes:</span> {exercise.notes}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </main>
       )}
 
-      {/* --- Modal: Edit Task Settings --- */}
+      {/* Task Settings Modal */}
       {editingTask && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white border-2 border-black rounded-[24px] p-6 max-w-md w-full shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] space-y-4">
@@ -765,7 +770,7 @@ export default function App() {
         </div>
       )}
 
-      {/* --- Modal: Edit Exercise Details (Notes & Links) --- */}
+      {/* Exercise Modal */}
       {editingExercise && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white border-2 border-black rounded-[24px] p-6 max-w-md w-full shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] space-y-4">
@@ -788,7 +793,7 @@ export default function App() {
             </div>
 
             <div>
-              <label className="block text-xs font-bold uppercase mb-1">Sets x Reps / Target</label>
+              <label className="block text-xs font-bold uppercase mb-1">Sets x Reps</label>
               <input 
                 type="text" 
                 value={editingExercise.exercise.setsReps}
@@ -837,13 +842,13 @@ export default function App() {
         </div>
       )}
 
-      {/* --- Modal: End Day Score Summary --- */}
+      {/* Score Summary Modal */}
       {showEndDaySummary && summaryData && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white border-2 border-black rounded-[24px] p-6 max-w-sm w-full shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] text-center space-y-4">
             <Trophy size={48} className="mx-auto" />
             <h3 className="text-2xl font-black uppercase">Day Completed!</h3>
-            <p className="text-sm font-semibold text-gray-600">You logged your score into browser cookies for today.</p>
+            <p className="text-sm font-semibold text-gray-600">Your score for today has been logged to your Google Drive.</p>
             
             <div className="border-2 border-black rounded-2xl p-4 bg-gray-50">
               <span className="text-xs uppercase font-bold tracking-widest block text-gray-500">Final Score</span>
