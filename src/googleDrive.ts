@@ -1,5 +1,5 @@
 // Replace this with your Client ID from Google Cloud Console
-export const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
+export const GOOGLE_CLIENT_ID = "290914887380-qkt3g1eufv6d2rpqnigiao5d04sfqdv6.apps.googleusercontent.com";
 
 const SCOPES = "https://www.googleapis.com/auth/drive.appdata";
 
