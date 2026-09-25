@@ -4,25 +4,30 @@ const SCOPES = "https://www.googleapis.com/auth/drive.appdata";
 
 let tokenClient: any;
 
+// Helper to reliably wait for the Google script to load
 export const initGoogleAuth = (onSuccess: (accessToken: string) => void) => {
-  if (typeof window !== "undefined" && (window as any).google) {
-    tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: SCOPES,
-      callback: (response: any) => {
-        if (response.access_token) {
-          onSuccess(response.access_token);
-        }
-      },
-    });
-  }
+  const checkGoogleLoaded = setInterval(() => {
+    if (typeof window !== "undefined" && (window as any).google?.accounts?.oauth2) {
+      clearInterval(checkGoogleLoaded);
+      
+      tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: SCOPES,
+        callback: (response: any) => {
+          if (response.access_token) {
+            onSuccess(response.access_token);
+          }
+        },
+      });
+    }
+  }, 100); // Check every 100ms until loaded
 };
 
 export const requestGoogleLogin = () => {
   if (tokenClient) {
     tokenClient.requestAccessToken({ prompt: "consent" });
   } else {
-    alert("Google API script not loaded yet. Please refresh.");
+    alert("Google API is still initializing... Please try again in 2 seconds.");
   }
 };
 
@@ -55,8 +60,8 @@ export const saveToDrive = async (
   const fileContent = JSON.stringify(appData);
 
   if (fileId) {
-    // Update existing file
-    await fetch(
+    // Update existing file in appDataFolder
+    const res = await fetch(
       `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
       {
         method: "PATCH",

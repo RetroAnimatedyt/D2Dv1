@@ -113,7 +113,25 @@ export default function App() {
   const [showEndDaySummary, setShowEndDaySummary] = useState(false);
   const [summaryData, setSummaryData] = useState<{ achieved: number; total: number } | null>(null);
 
-  // Core Sync Handler that updates Google Drive & updates fileId state
+  // Save to LocalStorage helper
+  const saveLocally = (updatedTasks: Task[], updatedWorkouts: WorkoutRoutine[], updatedLogs: Record<string, DayLog>) => {
+    localStorage.setItem('my_day_tasks', JSON.stringify(updatedTasks));
+    localStorage.setItem('my_day_workouts', JSON.stringify(updatedWorkouts));
+    localStorage.setItem('my_day_logs', JSON.stringify(updatedLogs));
+  };
+
+  // Load local cache immediately on startup
+  useEffect(() => {
+    const savedTasks = localStorage.getItem('my_day_tasks');
+    const savedWorkouts = localStorage.getItem('my_day_workouts');
+    const savedLogs = localStorage.getItem('my_day_logs');
+
+    if (savedTasks) setTasks(JSON.parse(savedTasks));
+    if (savedWorkouts) setWorkouts(JSON.parse(savedWorkouts));
+    if (savedLogs) setDayLogs(JSON.parse(savedLogs));
+  }, []);
+
+  // Sync to Drive and local storage simultaneously
   const syncToDrive = async (
     token = accessToken, 
     fId = fileId, 
@@ -121,13 +139,16 @@ export default function App() {
     updatedWorkouts = workouts, 
     updatedLogs = dayLogs
   ) => {
+    saveLocally(updatedTasks, updatedWorkouts, updatedLogs);
     if (!token) return;
+
     const payload = {
       tasks: updatedTasks,
       workouts: updatedWorkouts,
       dayLogs: updatedLogs,
       lastDate: todayDateStr
     };
+
     try {
       const savedFileId = await saveToDrive(token, fId, payload);
       if (savedFileId && savedFileId !== fileId) {
@@ -138,7 +159,7 @@ export default function App() {
     }
   };
 
-  // Initialize Google OAuth Token Client on Load
+  // Initialize Google Auth with retry
   useEffect(() => {
     initGoogleAuth(async (token) => {
       setAccessToken(token);
@@ -150,33 +171,34 @@ export default function App() {
           setFileId(existingFileId);
           const data = await loadFromDrive(token, existingFileId);
           if (data) {
+            let currentTasks = data.tasks || initialTasks;
+            let currentWorkouts = data.workouts || initialWorkouts;
+            let currentLogs = data.dayLogs || {};
+
             if (data.lastDate !== todayDateStr) {
-              const resetTasks = (data.tasks || []).map((t: Task) => ({ ...t, completed: false }));
-              const resetWorkouts = (data.workouts || []).map((w: WorkoutRoutine) => ({
+              currentTasks = currentTasks.map((t: Task) => ({ ...t, completed: false }));
+              currentWorkouts = currentWorkouts.map((w: WorkoutRoutine) => ({
                 ...w,
                 exercises: w.exercises.map((e: Exercise) => ({ ...e, completed: false }))
               }));
-              setTasks(resetTasks);
-              setWorkouts(resetWorkouts);
-              setDayLogs(data.dayLogs || {});
-              await syncToDrive(token, existingFileId, resetTasks, resetWorkouts, data.dayLogs || {});
-            } else {
-              setTasks(data.tasks || []);
-              setWorkouts(data.workouts || []);
-              setDayLogs(data.dayLogs || {});
             }
+
+            setTasks(currentTasks);
+            setWorkouts(currentWorkouts);
+            setDayLogs(currentLogs);
+            saveLocally(currentTasks, currentWorkouts, currentLogs);
           }
         } else {
           const newId = await saveToDrive(token, null, {
-            tasks: initialTasks,
-            workouts: initialWorkouts,
-            dayLogs: {},
+            tasks,
+            workouts,
+            dayLogs,
             lastDate: todayDateStr
           });
           if (newId) setFileId(newId);
         }
       } catch (err) {
-        console.error("Error loading data from Google Drive", err);
+        console.error("Error fetching Google Drive state:", err);
       } finally {
         setIsLoading(false);
       }
