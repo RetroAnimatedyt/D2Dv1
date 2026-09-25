@@ -113,6 +113,31 @@ export default function App() {
   const [showEndDaySummary, setShowEndDaySummary] = useState(false);
   const [summaryData, setSummaryData] = useState<{ achieved: number; total: number } | null>(null);
 
+  // Core Sync Handler that updates Google Drive & updates fileId state
+  const syncToDrive = async (
+    token = accessToken, 
+    fId = fileId, 
+    updatedTasks = tasks, 
+    updatedWorkouts = workouts, 
+    updatedLogs = dayLogs
+  ) => {
+    if (!token) return;
+    const payload = {
+      tasks: updatedTasks,
+      workouts: updatedWorkouts,
+      dayLogs: updatedLogs,
+      lastDate: todayDateStr
+    };
+    try {
+      const savedFileId = await saveToDrive(token, fId, payload);
+      if (savedFileId && savedFileId !== fileId) {
+        setFileId(savedFileId);
+      }
+    } catch (err) {
+      console.error("Sync error:", err);
+    }
+  };
+
   // Initialize Google OAuth Token Client on Load
   useEffect(() => {
     initGoogleAuth(async (token) => {
@@ -134,7 +159,7 @@ export default function App() {
               setTasks(resetTasks);
               setWorkouts(resetWorkouts);
               setDayLogs(data.dayLogs || {});
-              syncToDrive(token, existingFileId, resetTasks, resetWorkouts, data.dayLogs || {});
+              await syncToDrive(token, existingFileId, resetTasks, resetWorkouts, data.dayLogs || {});
             } else {
               setTasks(data.tasks || []);
               setWorkouts(data.workouts || []);
@@ -148,7 +173,7 @@ export default function App() {
             dayLogs: {},
             lastDate: todayDateStr
           });
-          setFileId(newId);
+          if (newId) setFileId(newId);
         }
       } catch (err) {
         console.error("Error loading data from Google Drive", err);
@@ -157,25 +182,6 @@ export default function App() {
       }
     });
   }, [todayDateStr]);
-
-  // Sync state changes to Google Drive
-  const syncToDrive = async (
-    token = accessToken, 
-    fId = fileId, 
-    updatedTasks = tasks, 
-    updatedWorkouts = workouts, 
-    updatedLogs = dayLogs
-  ) => {
-    if (!token) return;
-    const payload = {
-      tasks: updatedTasks,
-      workouts: updatedWorkouts,
-      dayLogs: updatedLogs,
-      lastDate: todayDateStr
-    };
-    const savedFileId = await saveToDrive(token, fId, payload);
-    if (!fileId && savedFileId) setFileId(savedFileId);
-  };
 
   // Calculations
   const perfectScore = tasks.reduce((acc, curr) => acc + curr.score, 0);

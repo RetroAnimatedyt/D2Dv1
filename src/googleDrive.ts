@@ -1,11 +1,9 @@
-// Replace this with your Client ID from Google Cloud Console
-export const GOOGLE_CLIENT_ID = "290914887380-qkt3g1eufv6d2rpqnigiao5d04sfqdv6.apps.googleusercontent.com";
+export const GOOGLE_CLIENT_ID = "YOUR_ACTUAL_CLIENT_ID.apps.googleusercontent.com"; // Keep your working ID here
 
 const SCOPES = "https://www.googleapis.com/auth/drive.appdata";
 
 let tokenClient: any;
 
-// Initialize Google OAuth Token Client
 export const initGoogleAuth = (onSuccess: (accessToken: string) => void) => {
   if (typeof window !== "undefined" && (window as any).google) {
     tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
@@ -28,9 +26,6 @@ export const requestGoogleLogin = () => {
   }
 };
 
-// --- Google Drive API Operations ---
-
-// 1. Search for existing data.json file inside appDataFolder
 export const findDataFile = async (accessToken: string) => {
   const res = await fetch(
     "https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='data.json'",
@@ -42,7 +37,6 @@ export const findDataFile = async (accessToken: string) => {
   return data.files && data.files.length > 0 ? data.files[0].id : null;
 };
 
-// 2. Load JSON content from Drive
 export const loadFromDrive = async (accessToken: string, fileId: string) => {
   const res = await fetch(
     `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
@@ -53,7 +47,6 @@ export const loadFromDrive = async (accessToken: string, fileId: string) => {
   return await res.json();
 };
 
-// 3. Save / Update data.json to Drive
 export const saveToDrive = async (
   accessToken: string,
   fileId: string | null,
@@ -76,7 +69,7 @@ export const saveToDrive = async (
     );
     return fileId;
   } else {
-    // Create new file inside appDataFolder
+    // Create new file inside hidden appDataFolder
     const metadata = {
       name: "data.json",
       parents: ["appDataFolder"],
