@@ -1,4 +1,4 @@
-export const GOOGLE_CLIENT_ID = "YOUR_ACTUAL_CLIENT_ID.apps.googleusercontent.com"; // Keep your working ID here
+export const GOOGLE_CLIENT_ID = "290914887380-qkt3g1eufv6d2rpqnigiao5d04sfqdv6.apps.googleusercontent.com"; // Keep your working ID here
 
 const SCOPES = "https://www.googleapis.com/auth/drive.appdata";
 
